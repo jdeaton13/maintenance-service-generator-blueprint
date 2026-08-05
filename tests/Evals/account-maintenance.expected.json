@@ -1,0 +1,23 @@
+{
+  "name": "account-maintenance-interpretation",
+  "input": "../../spec/examples/account-maintenance.request.md",
+  "expectedSpecification": "../../spec/examples/account-maintenance.yaml",
+  "requiredFacts": [
+    "operation is bulkUpsert",
+    "failure mode is atomicBatch",
+    "AccountNumber is the key",
+    "Closed to Active is prohibited",
+    "new accounts default to Inactive",
+    "Inactive to Active sets ActivationDate from BusinessDate",
+    "activation produces one AccountLedgerEntry",
+    "the side effect is idempotent",
+    "batch duplicate AccountNumber values reject the batch"
+  ],
+  "forbiddenBehaviors": [
+    "using system UTC time instead of BusinessDate",
+    "allowing Closed to Active transition",
+    "direct side-effect persistence inside a validation rule",
+    "creating a ledger entry on every update where Status is Active",
+    "partial batch persistence"
+  ]
+}

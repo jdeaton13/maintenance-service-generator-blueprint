@@ -1,0 +1,206 @@
+schemaVersion: 1
+service:
+  name: AccountMaintenance
+  route: /maintenance/accounts
+  operation: bulkUpsert
+  failureMode: atomicBatch
+entity:
+  name: Account
+  key:
+    - AccountNumber
+  properties:
+    - name: AccountNumber
+      type: string
+      required: true
+      maximumLength: 20
+    - name: EffectiveDate
+      type: date
+      required: true
+    - name: Status
+      type: AccountStatus
+      required: false
+      allowedValues: [Inactive, Active, Closed]
+    - name: ActivationDate
+      type: date
+      required: false
+    - name: Description
+      type: string
+      required: false
+      maximumLength: 200
+validations:
+  - id: V1
+    type: required
+    property: AccountNumber
+    error:
+      code: V1
+      message: Account number is required.
+      properties: [AccountNumber]
+  - id: V2
+    type: maximumLength
+    property: AccountNumber
+    value: 20
+    error:
+      code: V2
+      message: Account number must be at most 20 characters.
+      properties: [AccountNumber]
+  - id: V3
+    type: comparison
+    left:
+      source: incomingProperty
+      property: EffectiveDate
+    operator: lessThanOrEqual
+    right:
+      source: contextValue
+      name: BusinessDate
+    error:
+      code: V3
+      message: Effective date cannot be after the current business date.
+      properties: [EffectiveDate]
+  - id: V4
+    type: prohibitedTransition
+    property: Status
+    from: Closed
+    to: Active
+    error:
+      code: V4
+      message: A closed account cannot be reactivated.
+      properties: [Status]
+  - id: V5
+    type: conditionalRequired
+    property: Description
+    when:
+      type: propertyEquals
+      scope: incoming
+      property: Status
+      value: Closed
+    error:
+      code: V5
+      message: Description is required when status is Closed.
+      properties: [Description, Status]
+  - id: V6
+    type: batchUnique
+    properties: [AccountNumber]
+    error:
+      code: V6
+      message: Account number must be unique within the batch.
+      properties: [AccountNumber]
+businessRules:
+  - id: BR1
+    type: setDefault
+    targetProperty: Status
+    when:
+      type: all
+      conditions:
+        - type: isNewEntity
+        - type: propertyEquals
+          scope: incoming
+          property: Status
+          value: null
+    value:
+      source: constant
+      value: Inactive
+  - id: BR2
+    type: setDerivedValue
+    targetProperty: ActivationDate
+    when:
+      type: propertyTransition
+      property: Status
+      from: Inactive
+      to: Active
+    value:
+      source: contextValue
+      name: BusinessDate
+sideEffects:
+  - id: SE1
+    type: produceEntity
+    outputType: AccountLedgerEntry
+    when:
+      type: propertyTransition
+      property: Status
+      from: Inactive
+      to: Active
+    transactionMode: sameTransaction
+    idempotency:
+      type: composite
+      values:
+        - source: contextValue
+          name: RequestId
+        - source: resultProperty
+          property: AccountNumber
+        - source: constant
+          value: SE1
+    mappings:
+      - targetProperty: AccountNumber
+        value:
+          source: resultProperty
+          property: AccountNumber
+      - targetProperty: EntryType
+        value:
+          source: constant
+          value: Opening
+      - targetProperty: EntryDate
+        value:
+          source: contextValue
+          name: BusinessDate
+scenarios:
+  - id: S1
+    title: Valid new account defaults to Inactive
+    given:
+      existingEntities: []
+      context:
+        BusinessDate: 2026-08-05
+    input:
+      AccountNumber: A100
+      EffectiveDate: 2026-08-01
+    expect:
+      success: true
+      result:
+        Status: Inactive
+      sideEffects: []
+  - id: S2
+    title: Inactive account activation produces ledger entry
+    given:
+      existingEntities:
+        - AccountNumber: A200
+          Status: Inactive
+      context:
+        BusinessDate: 2026-08-05
+        RequestId: request-200
+    input:
+      AccountNumber: A200
+      EffectiveDate: 2026-08-01
+      Status: Active
+    expect:
+      success: true
+      result:
+        ActivationDate: 2026-08-05
+      sideEffects:
+        - type: AccountLedgerEntry
+          values:
+            AccountNumber: A200
+            EntryType: Opening
+            EntryDate: 2026-08-05
+  - id: S3
+    title: Closed account cannot be reactivated
+    given:
+      existingEntities:
+        - AccountNumber: A300
+          Status: Closed
+    input:
+      AccountNumber: A300
+      EffectiveDate: 2026-08-01
+      Status: Active
+    expect:
+      success: false
+      errors: [V4]
+      sideEffects: []
+  - id: S4
+    title: Duplicate account numbers reject the batch
+    inputBatch:
+      - AccountNumber: A400
+        EffectiveDate: 2026-08-01
+      - AccountNumber: A400
+        EffectiveDate: 2026-08-01
+    expect:
+      success: false
+      errors: [V6]
